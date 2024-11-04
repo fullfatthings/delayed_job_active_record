@@ -62,7 +62,11 @@ module Delayed
         end
 
         def self.before_fork
-          ::ActiveRecord::Base.clear_all_connections!
+          if Gem::Version.new("7.1.0") <= Gem::Version.new(::ActiveRecord::VERSION::STRING)
+            ::ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
+          else
+            ::ActiveRecord::Base.connection_handler.clear_all_connections!
+          end
         end
 
         def self.after_fork
@@ -101,7 +105,7 @@ module Delayed
           case connection.adapter_name
           when "PostgreSQL", "PostGIS"
             reserve_with_scope_using_optimized_postgres(ready_scope, worker, now)
-          when "MySQL", "Mysql2"
+          when "MySQL", "Mysql2", "Trilogy"
             reserve_with_scope_using_optimized_mysql(ready_scope, worker, now)
           when "MSSQL", "Teradata"
             reserve_with_scope_using_optimized_mssql(ready_scope, worker, now)
@@ -129,11 +133,23 @@ module Delayed
           # Note: active_record would attempt to generate UPDATE...LIMIT like
           # SQL for Postgres if we use a .limit() filter, but it would not
           # use 'FOR UPDATE' and we would have many locking conflicts
+          subquery = ready_scope.limit(1).lock(true).select("id").to_sql
+
+          # On PostgreSQL >= 9.5 we leverage SKIP LOCK to avoid multiple workers blocking each other
+          # when attempting to get the next available job
+          # https://www.postgresql.org/docs/9.5/sql-select.html#SQL-FOR-UPDATE-SHARE
+          if connection.send(:postgresql_version) >= 9_05_00 # rubocop:disable Style/NumericLiterals
+            subquery += " SKIP LOCKED"
+          end
+
           quoted_name = connection.quote_table_name(table_name)
-          subquery    = ready_scope.limit(1).lock(true).select("id").to_sql
-          sql         = "UPDATE #{quoted_name} SET locked_at = ?, locked_by = ? WHERE id IN (#{subquery}) RETURNING *"
-          reserved    = find_by_sql([sql, now, worker.name])
-          reserved[0]
+          find_by_sql(
+            [
+              "UPDATE #{quoted_name} SET locked_at = ?, locked_by = ? WHERE id IN (#{subquery}) RETURNING *",
+              now,
+              worker.name
+            ]
+          ).first
         end
 
         def self.reserve_with_scope_using_optimized_mysql(ready_scope, worker, now)
@@ -172,10 +188,18 @@ module Delayed
         def self.db_time_now
           if Time.zone
             Time.zone.now
-          elsif ::ActiveRecord::Base.default_timezone == :utc
+          elsif default_timezone == :utc
             Time.now.utc
           else
             Time.now # rubocop:disable Rails/TimeZone
+          end
+        end
+
+        def self.default_timezone
+          if ::ActiveRecord.respond_to?(:default_timezone)
+            ::ActiveRecord.default_timezone
+          else
+            ::ActiveRecord::Base.default_timezone
           end
         end
 

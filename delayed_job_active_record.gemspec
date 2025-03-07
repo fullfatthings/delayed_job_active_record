@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name        = "delayed_job_active_record"
-  spec.version     = "4.1.10"
+  spec.version     = "4.1.11"
   spec.summary     = "ActiveRecord backend for DelayedJob"
   spec.description = "ActiveRecord backend for Delayed::Job, originally authored by Tobias Lütke"
 
@@ -17,6 +17,6 @@ Gem::Specification.new do |spec|
 
   spec.metadata = { "rubygems_mfa_required" => "true" }
 
-  spec.add_dependency "activerecord", [">= 3.0", "< 8.0"]
+  spec.add_dependency "activerecord", [">= 3.0", "< 9.0"]
   spec.add_dependency "delayed_job",  [">= 3.0", "< 5"]
 end
